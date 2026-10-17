@@ -1,1 +1,40 @@
+name: LowLatencyScreenMirror
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "16.0"
 
+targets:
+  LowLatencyScreenMirror:
+    type: application
+    platform: iOS
+    sources:
+      - Shared
+      - iOSSenderApp
+    info:
+      path: iOSSenderApp/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSLocalNetworkUsageDescription: "Для прямой передачи видеопотока экрана на ПК/ТВ по Wi-Fi."
+        NSBonjourServices:
+          - "_llmirror._udp"
+    dependencies:
+      - target: BroadcastExtension
+        embed: true
+
+  BroadcastExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Shared
+      - BroadcastUploadExtension
+    info:
+      path: BroadcastUploadExtension/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: SampleHandler
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+        NSLocalNetworkUsageDescription: "Для отправки видеопотока экрана по UDP."
+        NSBonjourServices:
+          - "_llmirror._udp"
