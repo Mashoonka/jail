@@ -35,61 +35,34 @@ jobs:
 
           rm -f ./StreamingProtocolAndTransport.swift ./iOSSenderApp.swift ./BroadcastExtension_CaptureAndEncoder.swift ./tvOSReceiverApp.swift ./AppEntry.swift
 
-          # Авто-патч под строгий компилятор Swift в Xcode 16
+          # Авто-патч под компилятор Swift в Xcode 16
           python3 - << 'PYEOF'
-          # 1. Патчим StreamingProtocolAndTransport.swift
-          with open("Shared/StreamingProtocolAndTransport.swift", "r", encoding="utf-8") as f:
-              s = f.read()
-          if "import Combine" not in s:
-              s = s.replace("import Foundation", "import Foundation\nimport Combine", 1)
-          s = s.replace("@inlinable", "")
-          s = s.replace(
-              "Task { @MainActor in\n                self?.isSearching = (state == .ready)\n            }",
-              "guard let self else { return }\n            let ready = (state == .ready)\n            Task { @MainActor in\n                self.isSearching = ready\n            }"
-          )
-          s = s.replace(
-              "Task { @MainActor in\n                self?.isSearching = true\n            }",
-              "guard let self else { return }\n            Task { @MainActor in\n                self.isSearching = true\n            }"
-          )
-          s = s.replace(
-              "Task { @MainActor in\n                self?.isSearching = false\n            }",
-              "guard let self else { return }\n            Task { @MainActor in\n                self.isSearching = false\n            }"
-          )
-          s = s.replace(
-              "Task { @MainActor in\n                self?.receivers = list\n            }",
-              "guard let self else { return }\n            Task { @MainActor in\n                self.receivers = list\n            }"
-          )
-          s = s.replace(
-              "Task { @MainActor in\n                self?.receivers = found\n            }",
-              "guard let self else { return }\n            Task { @MainActor in\n                self.receivers = found\n            }"
-          )
-          with open("Shared/StreamingProtocolAndTransport.swift", "w", encoding="utf-8") as f:
-              f.write(s)
+          for path in [
+              "Shared/StreamingProtocolAndTransport.swift",
+              "iOSSenderApp/iOSSenderApp.swift",
+              "BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift",
+          ]:
+              with open(path, "r", encoding="utf-8") as f:
+                  text = f.read()
 
-          # 2. Патчим iOSSenderApp.swift
-          with open("iOSSenderApp/iOSSenderApp.swift", "r", encoding="utf-8") as f:
-              ui = f.read()
-          if "import Combine" not in ui:
-              ui = ui.replace("import SwiftUI", "import SwiftUI\nimport Combine\nimport UIKit", 1)
-          ui = ui.replace("@inlinable", "")
-          ui = ui.replace(
-              "Task { @MainActor in\n                guard let self else { return }",
-              "guard let self else { return }\n            Task { @MainActor in"
-          )
-          with open("iOSSenderApp/iOSSenderApp.swift", "w", encoding="utf-8") as f:
-              f.write(ui)
+              if path.endswith("StreamingProtocolAndTransport.swift") and "import Combine" not in text:
+                  text = text.replace("import Foundation", "import Foundation\nimport Combine", 1)
 
-          # 3. Патчим BroadcastExtension_CaptureAndEncoder.swift
-          with open("BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift", "r", encoding="utf-8") as f:
-              ext = f.read()
-          ext = ext.replace("@inlinable", "")
-          ext = ext.replace(
-              "let props: [CFString: Any] = [\n                    kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue!\n                ]",
-              "let props: [NSString: AnyObject] = [\n                    kVTEncodeFrameOptionKey_ForceKeyFrame as NSString: kCFBooleanTrue\n                ]"
-          )
-          ext = ext.replace("kCFBooleanTrue!", "kCFBooleanTrue")
-          with open("BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift", "w", encoding="utf-8") as f:
-              f.write(ext)
+              if path.endswith("iOSSenderApp.swift") and "import Combine" not in text:
+                  text = text.replace("import SwiftUI", "import SwiftUI\nimport Combine\nimport UIKit", 1)
+
+              # Заменяем Task { @MainActor in на DispatchQueue.main.async и убираем @MainActor / @inlinable
+              text = text.replace("Task { @MainActor in", "DispatchQueue.main.async {")
+              text = text.replace("@MainActor", "")
+              text = text.replace("@inlinable", "")
+              text = text.replace(
+                  "let props: [CFString: Any] = [\n                    kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue!\n                ]",
+                  "let props: [NSString: AnyObject] = [\n                    kVTEncodeFrameOptionKey_ForceKeyFrame as NSString: kCFBooleanTrue\n                ]"
+              )
+              text = text.replace("kCFBooleanTrue!", "kCFBooleanTrue")
+
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(text)
           PYEOF
 
           cat << 'EOF' > iOSSenderApp/AppEntry.swift
