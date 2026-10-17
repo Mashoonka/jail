@@ -19,37 +19,45 @@ jobs:
         run: |
           mkdir -p Shared iOSSenderApp BroadcastUploadExtension
 
-          # Ищем 3 файла .swift в любой папке репозитория
           SHARED_FILE=$(find . -maxdepth 3 -name "StreamingProtocolAndTransport.swift" | head -n 1)
           SENDER_FILE=$(find . -maxdepth 3 -name "iOSSenderApp.swift" | head -n 1)
           EXT_FILE=$(find . -maxdepth 3 -name "BroadcastExtension_CaptureAndEncoder.swift" | head -n 1)
 
           if [ -z "$SHARED_FILE" ] || [ -z "$SENDER_FILE" ] || [ -z "$EXT_FILE" ]; then
-            echo "ОШИБКА: Убедитесь, что в репозиторий загружены StreamingProtocolAndTransport.swift, iOSSenderApp.swift и BroadcastExtension_CaptureAndEncoder.swift"
+            echo "ОШИБКА: Не найдены .swift файлы в репозитории!"
             find . -maxdepth 3 -name "*.swift"
             exit 1
           fi
 
-          cp "$SHARED_FILE" Shared/StreamingProtocolAndTransport.swift
-          cp "$SENDER_FILE" iOSSenderApp/iOSSenderApp.swift
-          cp "$EXT_FILE" BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift
+          # Копируем только если файл ещё не лежит на своём месте
+          if [ ! "$SHARED_FILE" -ef "Shared/StreamingProtocolAndTransport.swift" ]; then
+            cp "$SHARED_FILE" Shared/StreamingProtocolAndTransport.swift
+          fi
+          if [ ! "$SENDER_FILE" -ef "iOSSenderApp/iOSSenderApp.swift" ]; then
+            cp "$SENDER_FILE" iOSSenderApp/iOSSenderApp.swift
+          fi
+          if [ ! "$EXT_FILE" -ef "BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift" ]; then
+            cp "$EXT_FILE" BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift
+          fi
 
-          # Удаляем дубликаты из корня, если файлы лежали там
+          # Удаляем случайные дубликаты в корне
           rm -f ./StreamingProtocolAndTransport.swift ./iOSSenderApp.swift ./BroadcastExtension_CaptureAndEncoder.swift ./tvOSReceiverApp.swift ./AppEntry.swift
 
-          # Добавляем import Combine для Xcode 16
-          if ! grep -q "import Combine" Shared/StreamingProtocolAndTransport.swift; then
-            sed -i '' 's/import Foundation/import Foundation\
-          import Combine/' Shared/StreamingProtocolAndTransport.swift
-          fi
-          if ! grep -q "import Combine" iOSSenderApp/iOSSenderApp.swift; then
-            sed -i '' 's/import SwiftUI/import SwiftUI\
-          import Combine\
-          import UIKit/' iOSSenderApp/iOSSenderApp.swift
-          fi
-
-          # Убираем лишний '!' у kCFBooleanTrue для совместимости с iOS 18 SDK
-          sed -i '' 's/kCFBooleanTrue!/kCFBooleanTrue as Any/g' BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift
+          # Патчим импорты и kCFBooleanTrue для Xcode 16 (iOS 18 SDK)
+          python3 - << 'PYEOF'
+          patches = [
+              ("Shared/StreamingProtocolAndTransport.swift", "import Foundation", "import Foundation\nimport Combine"),
+              ("iOSSenderApp/iOSSenderApp.swift", "import SwiftUI", "import SwiftUI\nimport Combine\nimport UIKit"),
+              ("BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift", "kCFBooleanTrue!", "kCFBooleanTrue as Any"),
+          ]
+          for path, old, new in patches:
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              if new not in content:
+                  content = content.replace(old, new)
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(content)
+          PYEOF
 
           # Создаём точку входа @main
           cat << 'EOF' > iOSSenderApp/AppEntry.swift
@@ -170,6 +178,7 @@ jobs:
               CODE_SIGN_IDENTITY: ""
               CODE_SIGNING_REQUIRED: "NO"
               CODE_SIGNING_ALLOWED: "NO"
+              AD_HOC_CODE_SIGNING_ALLOWED: "YES"
               ENABLE_BITCODE: "NO"
 
           targets:
@@ -207,6 +216,7 @@ jobs:
 
       - name: Generate Xcode project and compile
         run: |
+          rm -rf LowLatencyScreenMirror.xcodeproj build Payload LowLatencyScreenMirror.ipa
           which xcodegen || brew install xcodegen
           xcodegen generate
 
@@ -215,10 +225,12 @@ jobs:
             -scheme LowLatencyScreenMirror \
             -configuration Release \
             -sdk iphoneos \
+            -destination "generic/platform=iOS" \
             -derivedDataPath build \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
 
       - name: Ad-hoc sign and package IPA
         run: |
