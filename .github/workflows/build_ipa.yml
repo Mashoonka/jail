@@ -23,13 +23,6 @@ jobs:
           SENDER_FILE=$(find . -maxdepth 3 -name "iOSSenderApp.swift" | head -n 1)
           EXT_FILE=$(find . -maxdepth 3 -name "BroadcastExtension_CaptureAndEncoder.swift" | head -n 1)
 
-          if [ -z "$SHARED_FILE" ] || [ -z "$SENDER_FILE" ] || [ -z "$EXT_FILE" ]; then
-            echo "ОШИБКА: Не найдены .swift файлы в репозитории!"
-            find . -maxdepth 3 -name "*.swift"
-            exit 1
-          fi
-
-          # Копируем только если файл ещё не лежит на своём месте
           if [ ! "$SHARED_FILE" -ef "Shared/StreamingProtocolAndTransport.swift" ]; then
             cp "$SHARED_FILE" Shared/StreamingProtocolAndTransport.swift
           fi
@@ -40,26 +33,65 @@ jobs:
             cp "$EXT_FILE" BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift
           fi
 
-          # Удаляем случайные дубликаты в корне
           rm -f ./StreamingProtocolAndTransport.swift ./iOSSenderApp.swift ./BroadcastExtension_CaptureAndEncoder.swift ./tvOSReceiverApp.swift ./AppEntry.swift
 
-          # Патчим импорты и kCFBooleanTrue для Xcode 16 (iOS 18 SDK)
+          # Авто-патч под строгий компилятор Swift в Xcode 16
           python3 - << 'PYEOF'
-          patches = [
-              ("Shared/StreamingProtocolAndTransport.swift", "import Foundation", "import Foundation\nimport Combine"),
-              ("iOSSenderApp/iOSSenderApp.swift", "import SwiftUI", "import SwiftUI\nimport Combine\nimport UIKit"),
-              ("BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift", "kCFBooleanTrue!", "kCFBooleanTrue as Any"),
-          ]
-          for path, old, new in patches:
-              with open(path, "r", encoding="utf-8") as f:
-                  content = f.read()
-              if new not in content:
-                  content = content.replace(old, new)
-              with open(path, "w", encoding="utf-8") as f:
-                  f.write(content)
+          # 1. Патчим StreamingProtocolAndTransport.swift
+          with open("Shared/StreamingProtocolAndTransport.swift", "r", encoding="utf-8") as f:
+              s = f.read()
+          if "import Combine" not in s:
+              s = s.replace("import Foundation", "import Foundation\nimport Combine", 1)
+          s = s.replace("@inlinable", "")
+          s = s.replace(
+              "Task { @MainActor in\n                self?.isSearching = (state == .ready)\n            }",
+              "guard let self else { return }\n            let ready = (state == .ready)\n            Task { @MainActor in\n                self.isSearching = ready\n            }"
+          )
+          s = s.replace(
+              "Task { @MainActor in\n                self?.isSearching = true\n            }",
+              "guard let self else { return }\n            Task { @MainActor in\n                self.isSearching = true\n            }"
+          )
+          s = s.replace(
+              "Task { @MainActor in\n                self?.isSearching = false\n            }",
+              "guard let self else { return }\n            Task { @MainActor in\n                self.isSearching = false\n            }"
+          )
+          s = s.replace(
+              "Task { @MainActor in\n                self?.receivers = list\n            }",
+              "guard let self else { return }\n            Task { @MainActor in\n                self.receivers = list\n            }"
+          )
+          s = s.replace(
+              "Task { @MainActor in\n                self?.receivers = found\n            }",
+              "guard let self else { return }\n            Task { @MainActor in\n                self.receivers = found\n            }"
+          )
+          with open("Shared/StreamingProtocolAndTransport.swift", "w", encoding="utf-8") as f:
+              f.write(s)
+
+          # 2. Патчим iOSSenderApp.swift
+          with open("iOSSenderApp/iOSSenderApp.swift", "r", encoding="utf-8") as f:
+              ui = f.read()
+          if "import Combine" not in ui:
+              ui = ui.replace("import SwiftUI", "import SwiftUI\nimport Combine\nimport UIKit", 1)
+          ui = ui.replace("@inlinable", "")
+          ui = ui.replace(
+              "Task { @MainActor in\n                guard let self else { return }",
+              "guard let self else { return }\n            Task { @MainActor in"
+          )
+          with open("iOSSenderApp/iOSSenderApp.swift", "w", encoding="utf-8") as f:
+              f.write(ui)
+
+          # 3. Патчим BroadcastExtension_CaptureAndEncoder.swift
+          with open("BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift", "r", encoding="utf-8") as f:
+              ext = f.read()
+          ext = ext.replace("@inlinable", "")
+          ext = ext.replace(
+              "let props: [CFString: Any] = [\n                    kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue!\n                ]",
+              "let props: [NSString: AnyObject] = [\n                    kVTEncodeFrameOptionKey_ForceKeyFrame as NSString: kCFBooleanTrue\n                ]"
+          )
+          ext = ext.replace("kCFBooleanTrue!", "kCFBooleanTrue")
+          with open("BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift", "w", encoding="utf-8") as f:
+              f.write(ext)
           PYEOF
 
-          # Создаём точку входа @main
           cat << 'EOF' > iOSSenderApp/AppEntry.swift
           import SwiftUI
 
@@ -174,6 +206,7 @@ jobs:
           settings:
             base:
               SWIFT_VERSION: "5.0"
+              SWIFT_STRICT_CONCURRENCY: "minimal"
               IPHONEOS_DEPLOYMENT_TARGET: "16.0"
               CODE_SIGN_IDENTITY: ""
               CODE_SIGNING_REQUIRED: "NO"
@@ -220,6 +253,7 @@ jobs:
           which xcodegen || brew install xcodegen
           xcodegen generate
 
+          set +e
           xcodebuild clean build \
             -project LowLatencyScreenMirror.xcodeproj \
             -scheme LowLatencyScreenMirror \
@@ -230,7 +264,14 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES
+            AD_HOC_CODE_SIGNING_ALLOWED=YES > build.log 2>&1
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "=== ДЕТАЛИ ОШИБКИ КОМПИЛЯЦИИ ==="
+            grep -E "error:|fatal error:" build.log || tail -n 50 build.log
+            exit $EXIT_CODE
+          fi
+          set -e
 
       - name: Ad-hoc sign and package IPA
         run: |
