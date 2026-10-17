@@ -3,21 +3,213 @@ name: Build iOS IPA
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Generate Xcode project
+      - name: Prepare folder structure and patch Swift sources
         run: |
-          brew install xcodegen
+          mkdir -p Shared iOSSenderApp BroadcastUploadExtension
+
+          # Ищем 3 файла .swift в любой папке репозитория
+          SHARED_FILE=$(find . -maxdepth 3 -name "StreamingProtocolAndTransport.swift" | head -n 1)
+          SENDER_FILE=$(find . -maxdepth 3 -name "iOSSenderApp.swift" | head -n 1)
+          EXT_FILE=$(find . -maxdepth 3 -name "BroadcastExtension_CaptureAndEncoder.swift" | head -n 1)
+
+          if [ -z "$SHARED_FILE" ] || [ -z "$SENDER_FILE" ] || [ -z "$EXT_FILE" ]; then
+            echo "ОШИБКА: Убедитесь, что в репозиторий загружены StreamingProtocolAndTransport.swift, iOSSenderApp.swift и BroadcastExtension_CaptureAndEncoder.swift"
+            find . -maxdepth 3 -name "*.swift"
+            exit 1
+          fi
+
+          cp "$SHARED_FILE" Shared/StreamingProtocolAndTransport.swift
+          cp "$SENDER_FILE" iOSSenderApp/iOSSenderApp.swift
+          cp "$EXT_FILE" BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift
+
+          # Удаляем дубликаты из корня, если файлы лежали там
+          rm -f ./StreamingProtocolAndTransport.swift ./iOSSenderApp.swift ./BroadcastExtension_CaptureAndEncoder.swift ./tvOSReceiverApp.swift ./AppEntry.swift
+
+          # Добавляем import Combine для Xcode 16
+          if ! grep -q "import Combine" Shared/StreamingProtocolAndTransport.swift; then
+            sed -i '' 's/import Foundation/import Foundation\
+          import Combine/' Shared/StreamingProtocolAndTransport.swift
+          fi
+          if ! grep -q "import Combine" iOSSenderApp/iOSSenderApp.swift; then
+            sed -i '' 's/import SwiftUI/import SwiftUI\
+          import Combine\
+          import UIKit/' iOSSenderApp/iOSSenderApp.swift
+          fi
+
+          # Убираем лишний '!' у kCFBooleanTrue для совместимости с iOS 18 SDK
+          sed -i '' 's/kCFBooleanTrue!/kCFBooleanTrue as Any/g' BroadcastUploadExtension/BroadcastExtension_CaptureAndEncoder.swift
+
+          # Создаём точку входа @main
+          cat << 'EOF' > iOSSenderApp/AppEntry.swift
+          import SwiftUI
+
+          @main
+          struct LowLatencyScreenMirrorApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      SenderMainView()
+                  }
+              }
+          }
+          EOF
+
+      - name: Generate Info.plist and project.yml
+        run: |
+          cat << 'EOF' > iOSSenderApp/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>ru</string>
+              <key>CFBundleDisplayName</key>
+              <string>LowLatency Mirror</string>
+              <key>CFBundleExecutable</key>
+              <string>$(EXECUTABLE_NAME)</string>
+              <key>CFBundleIdentifier</key>
+              <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>$(PRODUCT_NAME)</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+              <key>UIApplicationSceneManifest</key>
+              <dict>
+                  <key>UIApplicationSupportsMultipleScenes</key>
+                  <false/>
+              </dict>
+              <key>UILaunchScreen</key>
+              <dict/>
+              <key>UISupportedInterfaceOrientations</key>
+              <array>
+                  <string>UIInterfaceOrientationPortrait</string>
+                  <string>UIInterfaceOrientationLandscapeLeft</string>
+                  <string>UIInterfaceOrientationLandscapeRight</string>
+              </array>
+              <key>NSLocalNetworkUsageDescription</key>
+              <string>Для прямой передачи видеопотока экрана на ПК или ТВ по Wi-Fi.</string>
+              <key>NSBonjourServices</key>
+              <array>
+                  <string>_llmirror._udp</string>
+              </array>
+          </dict>
+          </plist>
+          EOF
+
+          cat << 'EOF' > BroadcastUploadExtension/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>ru</string>
+              <key>CFBundleDisplayName</key>
+              <string>BroadcastExtension</string>
+              <key>CFBundleExecutable</key>
+              <string>$(EXECUTABLE_NAME)</string>
+              <key>CFBundleIdentifier</key>
+              <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>$(PRODUCT_NAME)</string>
+              <key>CFBundlePackageType</key>
+              <string>XPC!</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>NSExtension</key>
+              <dict>
+                  <key>NSExtensionPointIdentifier</key>
+                  <string>com.apple.broadcast-services-upload</string>
+                  <key>NSExtensionPrincipalClass</key>
+                  <string>SampleHandler</string>
+                  <key>RPBroadcastProcessMode</key>
+                  <string>RPBroadcastProcessModeSampleBuffer</string>
+              </dict>
+              <key>NSLocalNetworkUsageDescription</key>
+              <string>Для отправки видеопотока экрана по UDP.</string>
+              <key>NSBonjourServices</key>
+              <array>
+                  <string>_llmirror._udp</string>
+              </array>
+          </dict>
+          </plist>
+          EOF
+
+          cat << 'EOF' > project.yml
+          name: LowLatencyScreenMirror
+          options:
+            bundleIdPrefix: com.example.lowlatencymirror
+            deploymentTarget:
+              iOS: "16.0"
+          settings:
+            base:
+              SWIFT_VERSION: "5.0"
+              IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+              CODE_SIGN_IDENTITY: ""
+              CODE_SIGNING_REQUIRED: "NO"
+              CODE_SIGNING_ALLOWED: "NO"
+              ENABLE_BITCODE: "NO"
+
+          targets:
+            LowLatencyScreenMirror:
+              type: application
+              platform: iOS
+              sources:
+                - path: Shared
+                - path: iOSSenderApp
+                  excludes:
+                    - Info.plist
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.example.lowlatencymirror
+                  INFOPLIST_FILE: iOSSenderApp/Info.plist
+              dependencies:
+                - target: BroadcastExtension
+                  embed: true
+                  codeSign: false
+
+            BroadcastExtension:
+              type: app-extension
+              platform: iOS
+              sources:
+                - path: Shared
+                - path: BroadcastUploadExtension
+                  excludes:
+                    - Info.plist
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.example.lowlatencymirror.BroadcastExtension
+                  INFOPLIST_FILE: BroadcastUploadExtension/Info.plist
+                  SKIP_INSTALL: "YES"
+          EOF
+
+      - name: Generate Xcode project and compile
+        run: |
+          which xcodegen || brew install xcodegen
           xcodegen generate
 
-      - name: Compile Unsigned App
-        run: |
           xcodebuild clean build \
             -project LowLatencyScreenMirror.xcodeproj \
             -scheme LowLatencyScreenMirror \
@@ -28,11 +220,17 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Package IPA
+      - name: Ad-hoc sign and package IPA
         run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/LowLatencyScreenMirror.app"
+          if [ -d "$APP_PATH/PlugIns/BroadcastExtension.appex" ]; then
+            codesign --force --sign - "$APP_PATH/PlugIns/BroadcastExtension.appex"
+          fi
+          codesign --force --sign - "$APP_PATH"
+
           mkdir -p Payload
-          cp -r build/Build/Products/Release-iphoneos/LowLatencyScreenMirror.app Payload/
-          zip -r LowLatencyScreenMirror.ipa Payload
+          cp -r "$APP_PATH" Payload/
+          zip -qry LowLatencyScreenMirror.ipa Payload
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
