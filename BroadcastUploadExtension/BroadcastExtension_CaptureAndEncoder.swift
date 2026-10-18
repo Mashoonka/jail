@@ -410,7 +410,7 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
     public override func broadcastStarted(withSetupInfo setupInfo: [String : NSObject]?) {
         // 1. Читаем адрес выбранного Apple TV из общего контейнера App Group
         // ВПИШИТЕ СЮДА IP ПРИСТАВКИ (тот, что показан на экране телевизора):
-        let host = "192.168.0.XXX"
+        let host = "192.168.0.158"
         let port: UInt16 = 5004
         let serviceName = ""
         let rawCodec = UInt8(sharedDefaults?.integer(forKey: StreamConfig.keySelectedCodec) ?? Int(VideoCodecType.h264.rawValue))
