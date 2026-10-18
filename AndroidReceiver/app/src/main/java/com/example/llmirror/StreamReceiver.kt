@@ -62,7 +62,7 @@ class StreamReceiver(
                 reuseAddress = true
                 receiveBufferSize = 4 * 1024 * 1024
                 soTimeout = 200
-                bind(InetSocketAddress(port))
+                bind(InetSocketAddress(this@StreamReceiver.port))
             }
         } catch (e: Exception) {
             listener.onError("Не удалось открыть порт $port: ${e.message}")
