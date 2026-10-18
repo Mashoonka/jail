@@ -388,10 +388,10 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
 
     public override func broadcastStarted(withSetupInfo setupInfo: [String : NSObject]?) {
         // 1. Читаем адрес выбранного Apple TV из общего контейнера App Group
-        let savedHost = sharedDefaults?.string(forKey: StreamConfig.keyTargetHost) ?? ""
-	let host = savedHost.isEmpty ? "192.168.0.105:5004" : savedHost 
-        let port = UInt16(sharedDefaults?.integer(forKey: StreamConfig.keyTargetPort) ?? Int(StreamConfig.defaultUDPPort))
-        let serviceName = sharedDefaults?.string(forKey: StreamConfig.keyTargetServiceName) ?? ""
+          let savedHost = sharedDefaults?.string(forKey: StreamConfig.keyTargetHost) ?? ""
+      let host = "192.168.0.158"
+   let port: UInt16 = 5004
+   let serviceName = ""
         let rawCodec = UInt8(sharedDefaults?.integer(forKey: StreamConfig.keySelectedCodec) ?? Int(VideoCodecType.h264.rawValue))
         let selectedCodec = VideoCodecType(rawValue: rawCodec) ?? .h264
 
