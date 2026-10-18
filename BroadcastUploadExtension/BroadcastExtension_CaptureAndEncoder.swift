@@ -191,10 +191,12 @@ public final class HardwareVideoEncoder: @unchecked Sendable {
             encW = max(2, Int32((sw * scale / 2.0).rounded()) * 2)
             encH = max(2, Int32((sh * scale / 2.0).rounded()) * 2)
         }
+        var newSession: VTCompressionSession?
+
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
-            width: ecnW,
-            height: ecnH,
+            width: encW,
+            height: encH,
             codecType: cmCodec,
             encoderSpecification: nil,
             imageBufferAttributes: nil, // Не задаём атрибуты, чтобы избежать переаллокации буферов ReplayKit!
@@ -407,10 +409,10 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
 
     public override func broadcastStarted(withSetupInfo setupInfo: [String : NSObject]?) {
         // 1. Читаем адрес выбранного Apple TV из общего контейнера App Group
-          let savedHost = sharedDefaults?.string(forKey: StreamConfig.keyTargetHost) ?? ""
-      let host = "192.168.0.158"
-   let port: UInt16 = 5004
-   let serviceName = ""
+        // ВПИШИТЕ СЮДА IP ПРИСТАВКИ (тот, что показан на экране телевизора):
+        let host = "192.168.0.XXX"
+        let port: UInt16 = 5004
+        let serviceName = ""
         let rawCodec = UInt8(sharedDefaults?.integer(forKey: StreamConfig.keySelectedCodec) ?? Int(VideoCodecType.h264.rawValue))
         let selectedCodec = VideoCodecType(rawValue: rawCodec) ?? .h264
 
