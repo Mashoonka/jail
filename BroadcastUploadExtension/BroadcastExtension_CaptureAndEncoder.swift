@@ -49,6 +49,8 @@ public final class HardwareVideoEncoder: @unchecked Sendable {
     private var forceNextKeyframe: Bool = true
     private var frameCounter: UInt32 = 0
     private var lastFrameTimestampUs: UInt64 = 0
+    private var sourceWidth: Int32 = 0
+    private var sourceHeight: Int32 = 0
     private let logger = Logger(subsystem: "com.llmirror.extension", category: "HardwareEncoder")
 
     /// Предварительно выделенный буфер (8 КБ) для сериализации SPS/PPS/VPS без аллокаций в куче
@@ -118,7 +120,16 @@ public final class HardwareVideoEncoder: @unchecked Sendable {
         let captureTimeUs = MonotonicClock.nowMicroseconds()
 
         encoderQueue.async { [weak self] in
-            guard let self, let session = self.session else { return }
+            guard let self else { return }
+
+            let srcW = Int32(CVPixelBufferGetWidth(pixelBuffer))
+            let srcH = Int32(CVPixelBufferGetHeight(pixelBuffer))
+            if srcW != self.sourceWidth || srcH != self.sourceHeight {
+                self.sourceWidth = srcW
+                self.sourceHeight = srcH
+                self.setupCompressionSession(profile: self.currentProfile)
+            }
+            guard let session = self.session else { return }
 
             // Ограничение частоты кадров (Frame Pacing) при снижении targetFPS из-за нагрева или плохой сети
             let minIntervalUs = UInt64(1_000_000 / max(1, Int(self.currentProfile.targetFPS))) - 1_500
@@ -170,12 +181,20 @@ public final class HardwareVideoEncoder: @unchecked Sendable {
         }
 
         let cmCodec: CMVideoCodecType = (codec == .hevc) ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264
-        var newSession: VTCompressionSession?
-
+        var encW = profile.width
+        var encH = profile.height
+        if sourceWidth > 0 && sourceHeight > 0 {
+            let longSide = Double(max(profile.width, profile.height))
+            let sw = Double(sourceWidth)
+            let sh = Double(sourceHeight)
+            let scale = longSide / max(sw, sh)
+            encW = max(2, Int32((sw * scale / 2.0).rounded()) * 2)
+            encH = max(2, Int32((sh * scale / 2.0).rounded()) * 2)
+        }
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
-            width: profile.width,
-            height: profile.height,
+            width: ecnW,
+            height: ecnH,
             codecType: cmCodec,
             encoderSpecification: nil,
             imageBufferAttributes: nil, // Не задаём атрибуты, чтобы избежать переаллокации буферов ReplayKit!
